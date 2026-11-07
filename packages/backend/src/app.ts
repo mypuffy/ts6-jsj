@@ -37,11 +37,16 @@ import { requireServerAccess } from './middleware/server-access.js';
 export function createApp(): Express {
   const app = express();
 
-  // Trust first proxy (nginx / Coolify reverse proxy)
-  app.set('trust proxy', 1);
+  // Reverse proxies: by default trust every proxy in a private network
+  // (your nginx / Nginx Proxy Manager → frontend nginx → backend), so req.ip is the
+  // real visitor IP. Override with TRUST_PROXY (e.g. "1", "2", "10.0.0.5").
+  const tp = process.env.TRUST_PROXY;
+  app.set('trust proxy', tp ? (/^\d+$/.test(tp) ? parseInt(tp, 10) : tp) : 'loopback, linklocal, uniquelocal');
 
   app.use(helmet());
-  app.use(cors({ origin: config.frontendUrl, credentials: true }));
+  // FRONTEND_URL may list several origins, e.g. "https://ts.example.com,http://192.168.1.50:3000"
+  const allowedOrigins = config.frontendUrl.split(',').map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
+  app.use(cors({ origin: allowedOrigins.length > 1 ? allowedOrigins : allowedOrigins[0], credentials: true }));
   app.use(express.json({ limit: '10mb' }));
 
   // Health check
@@ -49,16 +54,26 @@ export function createApp(): Express {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  // H1: Rate limiting on auth endpoints
+  // H1: Rate limiting on auth endpoints (per real visitor IP)
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 15,
+    skipSuccessfulRequests: true, // only failed logins count
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: 'Too many attempts, please try again later' },
+    message: { error: 'Too many failed login attempts, please try again in 15 minutes' },
+  });
+  // Token refresh happens automatically every few minutes per open tab – needs its own, higher limit
+  const refreshLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests, please try again later' },
   });
   app.use('/api/auth/login', authLimiter);
-  app.use('/api/auth/refresh', authLimiter);
+  app.use('/api/setup/init', authLimiter);
+  app.use('/api/auth/refresh', refreshLimiter);
 
   // Public routes
   app.use('/api/setup', setupRoutes);

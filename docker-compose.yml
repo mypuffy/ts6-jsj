@@ -28,6 +28,7 @@ services:
       MUSIC_DIR: /data/music
       SIDECAR_URL: http://sidecar:9800
       VOICE_DEBUG: ${VOICE_DEBUG:-0}
+      TRUST_PROXY: ${TRUST_PROXY:-}
     volumes:
       - backend-data:/app/packages/backend/data
       - music-data:/data/music
