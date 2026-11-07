@@ -211,13 +211,20 @@ export class VoiceBot extends EventEmitter {
     this.pipeline = new AudioPipeline();
     this.queue = new PlayQueue();
 
+    // VOICE_DEBUG=1 → full TS protocol log (handshake, commands, errors)
+    if (process.env.VOICE_DEBUG === '1') {
+      this.client.on('debug', (m: string) => console.log(`[VoiceBot ${config.id}] ${m}`));
+    }
+
     this.client.on('error', (err) => {
+      console.error(`[VoiceBot ${config.id}] Connection error: ${err?.message ?? err}`);
       this._status = 'error';
       this.emit('error', err);
       this.emit('statusChange', this._status);
     });
 
     this.client.on('disconnected', () => {
+      console.log(`[VoiceBot ${config.id}] Disconnected${this._lastError ? ` (last error: ${this._lastError})` : ''}`);
       this.stopIcyPolling();
       this.stopPlayback();
       this.clients.clear();
@@ -538,7 +545,15 @@ export class VoiceBot extends EventEmitter {
       channelPassword: this.config.channelPassword,
     };
 
-    await this.client.connect(opts);
+    console.log(`[VoiceBot ${this.config.id}] Connecting to ${this.config.serverHost}:${this.config.serverPort} as "${this.config.nickname}"${this.config.defaultChannel ? ` → channel "${this.config.defaultChannel}"` : ''}`);
+    try {
+      await this.client.connect(opts);
+    } catch (err: any) {
+      console.error(`[VoiceBot ${this.config.id}] Connect failed: ${err?.message ?? err}`);
+      this._lastError = err?.message ?? String(err);
+      throw err;
+    }
+    console.log(`[VoiceBot ${this.config.id}] Connected (clid=${this.client.getClientId()})`);
     this._status = 'connected';
     this.emit('statusChange', this._status);
     this.emit('connected');

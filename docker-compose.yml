@@ -27,6 +27,7 @@ services:
       JWT_REFRESH_EXPIRY: 7d
       MUSIC_DIR: /data/music
       SIDECAR_URL: http://sidecar:9800
+      VOICE_DEBUG: ${VOICE_DEBUG:-0}
     volumes:
       - backend-data:/app/packages/backend/data
       - music-data:/data/music
