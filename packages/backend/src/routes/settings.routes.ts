@@ -90,7 +90,7 @@ settingsRoutes.get('/yt-dlp', requireAdmin, async (_req: Request, res: Response)
 
 // POST /api/settings/yt-dlp/update — Update yt-dlp in place via pip (Docker image ships pip)
 settingsRoutes.post('/yt-dlp/update', requireAdmin, (_req: Request, res: Response, next) => {
-  const proc = spawn('python3', ['-m', 'pip', 'install', '-U', '--no-cache-dir', '--break-system-packages', 'yt-dlp[default]', 'bgutil-ytdlp-pot-provider'], { shell: false });
+  const proc = spawn('python3', ['-m', 'pip', 'install', '-U', '--no-cache-dir', '--break-system-packages', 'yt-dlp[default]', 'bgutil-ytdlp-pot-provider', 'deno'], { shell: false });
   let out = '';
   proc.stdout.on('data', (c: Buffer) => { out += c.toString(); });
   proc.stderr.on('data', (c: Buffer) => { out += c.toString(); });

@@ -10,7 +10,7 @@ RUN apt-get update && \
       python3 \
       python3-pip \
       ca-certificates \
-    && python3 -m pip install --break-system-packages --no-cache-dir -U "yt-dlp[default]" bgutil-ytdlp-pot-provider \
+    && python3 -m pip install --break-system-packages --no-cache-dir -U "yt-dlp[default]" bgutil-ytdlp-pot-provider deno \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -43,7 +43,7 @@ COPY --from=build /app/packages/backend/node_modules ./packages/backend/node_mod
 WORKDIR /app/packages/backend
 RUN mkdir -p data /data/music && \
     mkdir -p /root/.config/yt-dlp && \
-    echo "--js-runtimes node" > /root/.config/yt-dlp/config
+    echo "--js-runtimes deno,node" > /root/.config/yt-dlp/config
 
 EXPOSE 3001
 ENV SIDECAR_URL=http://ts6-sidecar:9800
