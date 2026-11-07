@@ -1,0 +1,68 @@
+# ─────────────────────────────────────────────────────────────
+#  TS6 Manager – JSJ-Version (neuer, eigener Dockge-Stack)
+#  git clone https://github.com/mypuffy/ts6-jsj.git /opt/stacks/ts6-jsj
+#  Werte für JWT_SECRET / ENCRYPTION_KEY usw. kommen aus der .env
+#  (in Dockge unten im Stack-Editor unter ".env").
+# ─────────────────────────────────────────────────────────────
+name: ts6-jsj
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    image: ts6-jsj:backend
+    container_name: ts6jsj-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      TZ: Europe/Berlin
+      DATABASE_URL: file:/app/packages/backend/data/ts6webui.db
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET in der .env setzen}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      TS_ALLOW_SELF_SIGNED: ${TS_ALLOW_SELF_SIGNED:-false}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      JWT_ACCESS_EXPIRY: 15m
+      JWT_REFRESH_EXPIRY: 7d
+      MUSIC_DIR: /data/music
+      SIDECAR_URL: http://sidecar:9800
+    volumes:
+      - backend-data:/app/packages/backend/data
+      - music-data:/data/music
+    ports:
+      - "3001:3001"
+    depends_on:
+      - sidecar
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    image: ts6-jsj:frontend
+    container_name: ts6jsj-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+  sidecar:
+    # Video-Streaming-Relay (unverändert vom Originalprojekt)
+    image: clusterzx/ts6-manager:sidecar
+    container_name: ts6jsj-sidecar
+    restart: unless-stopped
+    environment:
+      SIDECAR_PORT: 9800
+    ports:
+      - "9800:9800"
+
+volumes:
+  backend-data:
+  music-data:

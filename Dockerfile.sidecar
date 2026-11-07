@@ -1,0 +1,15 @@
+# syntax=docker/dockerfile:1.4
+FROM golang:1.22-bookworm AS build
+WORKDIR /src
+COPY packages/sidecar/go.mod packages/sidecar/go.sum ./
+RUN go mod download
+COPY packages/sidecar/main.go .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /sidecar main.go
+
+FROM debian:bookworm-slim
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY --from=build /sidecar /usr/local/bin/sidecar
+EXPOSE 9800
+CMD ["sidecar"]

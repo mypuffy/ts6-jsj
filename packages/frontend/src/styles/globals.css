@@ -1,0 +1,252 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Theme: "Booth" — graphite surfaces, a single signal-orange accent (think
+ * mixer LEDs / SoundCloud), mono numerals for anything that is data.
+ */
+@layer base {
+  :root {
+    --background: 30 20% 97%;
+    --foreground: 240 10% 8%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 8%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 8%;
+    --primary: 18 96% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 30 12% 92%;
+    --secondary-foreground: 240 8% 14%;
+    --muted: 30 14% 94%;
+    --muted-foreground: 240 4% 42%;
+    --accent: 30 14% 91%;
+    --accent-foreground: 240 8% 12%;
+    --destructive: 356 78% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 60% 38%;
+    --warning: 38 92% 48%;
+    --border: 30 10% 87%;
+    --input: 30 10% 85%;
+    --ring: 18 96% 50%;
+    --radius: 0.75rem;
+    --sidebar: 30 16% 95%;
+    --sidebar-foreground: 240 5% 34%;
+    --sidebar-accent: 30 14% 90%;
+    --sidebar-accent-foreground: 18 90% 42%;
+    --sidebar-border: 30 10% 88%;
+    --chart-1: 18 96% 52%;
+    --chart-2: 200 80% 48%;
+    --chart-3: 268 60% 58%;
+    --chart-4: 45 92% 50%;
+    --chart-5: 152 55% 42%;
+    --glow: 18 96% 50%;
+  }
+
+  .dark {
+    --background: 240 6% 5%;
+    --foreground: 30 10% 92%;
+    --card: 240 5% 8%;
+    --card-foreground: 30 10% 92%;
+    --popover: 240 5% 9%;
+    --popover-foreground: 30 10% 92%;
+    --primary: 20 100% 56%;
+    --primary-foreground: 240 10% 4%;
+    --secondary: 240 4% 13%;
+    --secondary-foreground: 30 8% 82%;
+    --muted: 240 4% 11%;
+    --muted-foreground: 240 5% 58%;
+    --accent: 240 4% 14%;
+    --accent-foreground: 30 10% 92%;
+    --destructive: 356 80% 58%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 60% 48%;
+    --warning: 38 95% 56%;
+    --border: 240 4% 15%;
+    --input: 240 4% 17%;
+    --ring: 20 100% 56%;
+    --sidebar: 240 7% 4%;
+    --sidebar-foreground: 240 5% 62%;
+    --sidebar-accent: 240 5% 10%;
+    --sidebar-accent-foreground: 20 100% 64%;
+    --sidebar-border: 240 4% 11%;
+    --chart-1: 20 100% 58%;
+    --chart-2: 200 85% 58%;
+    --chart-3: 268 70% 68%;
+    --chart-4: 45 95% 58%;
+    --chart-5: 152 60% 50%;
+    --glow: 20 100% 56%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-feature-settings: 'ss01', 'tnum';
+  }
+  h1, h2, h3 {
+    letter-spacing: -0.02em;
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.3);
+  }
+
+  /* Fix Radix ScrollArea display:table bug preventing scrolling */
+  [data-radix-scroll-area-viewport] > div {
+    display: block !important;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full;
+    background: hsl(var(--border));
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.4);
+    background-clip: padding-box;
+  }
+}
+
+@layer utilities {
+  .font-mono-data {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-feature-settings: 'zero';
+  }
+
+  /* App background: faint dot grid + warm glow in the corner */
+  .grid-bg {
+    background-image:
+      radial-gradient(1200px 500px at 100% -10%, hsl(var(--glow) / 0.07), transparent 60%),
+      radial-gradient(hsl(var(--foreground) / 0.045) 1px, transparent 1px);
+    background-size: auto, 22px 22px;
+    background-attachment: fixed, local;
+  }
+
+  .surface-glass {
+    background: hsl(var(--card) / 0.72);
+    backdrop-filter: blur(14px) saturate(140%);
+    -webkit-backdrop-filter: blur(14px) saturate(140%);
+  }
+
+  .scan-line {
+    position: relative;
+    overflow: hidden;
+  }
+  .scan-line::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.45), transparent);
+    animation: scan 4s linear infinite;
+  }
+  @keyframes scan {
+    0% { top: 0; opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { top: 100%; opacity: 0; }
+  }
+
+  /* Kept old names so existing pages pick up the new accent automatically */
+  .glow-teal,
+  .glow-primary {
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.25), 0 8px 30px -10px hsl(var(--primary) / 0.45);
+  }
+
+  .text-glow {
+    text-shadow: 0 0 14px hsl(var(--primary) / 0.55);
+  }
+
+  .fade-in {
+    animation: fadeIn 0.28s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .slide-in-left {
+    animation: slideInLeft 0.2s ease-out;
+  }
+  @keyframes slideInLeft {
+    from { opacity: 0; transform: translateX(-8px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  .pulse-dot {
+    animation: pulseDot 2s ease-in-out infinite;
+  }
+  @keyframes pulseDot {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Equalizer bars for "now playing" */
+  .eq {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 14px;
+  }
+  .eq > span {
+    width: 3px;
+    border-radius: 1px;
+    background: hsl(var(--primary));
+    animation: eq 0.9s ease-in-out infinite;
+  }
+  .eq > span:nth-child(2) { animation-delay: -0.3s; }
+  .eq > span:nth-child(3) { animation-delay: -0.6s; }
+  .eq > span:nth-child(4) { animation-delay: -0.15s; }
+  .eq.paused > span {
+    animation-play-state: paused;
+    height: 30% !important;
+  }
+  @keyframes eq {
+    0%, 100% { height: 25%; }
+    50% { height: 100%; }
+  }
+
+  /* Spinning vinyl placeholder artwork */
+  .vinyl {
+    background:
+      radial-gradient(circle at center, hsl(var(--primary)) 0 9%, hsl(240 6% 6%) 9.5% 12%, transparent 12.5%),
+      repeating-radial-gradient(circle at center, hsl(240 5% 10%) 0 2px, hsl(240 5% 13%) 2px 3px);
+  }
+  .spin-slow {
+    animation: spin 6s linear infinite;
+  }
+  .spin-slow.paused {
+    animation-play-state: paused;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .eq > span, .spin-slow, .scan-line::after, .pulse-dot { animation: none !important; }
+    .fade-in, .slide-in-left { animation: none !important; }
+  }
+}
