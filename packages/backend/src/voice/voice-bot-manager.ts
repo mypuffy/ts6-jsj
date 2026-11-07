@@ -324,7 +324,7 @@ export class VoiceBotManager extends EventEmitter {
 
   async startBot(id: number): Promise<void> {
     const bot = this.bots.get(id);
-    if (!bot) throw new Error(`Music bot ${id} not found`);
+    if (!bot) throw new Error(`Music bot ${id} is not loaded – its identity could not be read (ENCRYPTION_KEY changed?). Delete the bot and create it again.`);
     this.clearReconnect(id);
     await bot.start();
   }

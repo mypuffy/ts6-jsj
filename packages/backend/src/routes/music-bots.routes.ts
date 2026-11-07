@@ -197,7 +197,10 @@ musicBotRoutes.post('/:id/start', async (req: Request, res: Response, next) => {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     await manager.startBot(parseInt(req.params.id as string));
     res.json({ success: true });
-  } catch (err) { next(err); }
+  } catch (err: any) {
+    console.error('[music-bots] start failed:', err?.message ?? err);
+    next(err instanceof AppError ? err : new AppError(502, err?.message ?? String(err)));
+  }
 });
 
 // POST /:id/stop — Stop bot
@@ -206,7 +209,10 @@ musicBotRoutes.post('/:id/stop', async (req: Request, res: Response, next) => {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     await manager.stopBot(parseInt(req.params.id as string));
     res.json({ success: true });
-  } catch (err) { next(err); }
+  } catch (err: any) {
+    console.error('[music-bots] stop failed:', err?.message ?? err);
+    next(err instanceof AppError ? err : new AppError(502, err?.message ?? String(err)));
+  }
 });
 
 // POST /:id/restart — Restart bot
