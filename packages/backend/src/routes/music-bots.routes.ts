@@ -132,7 +132,10 @@ musicBotRoutes.post('/', async (req: Request, res: Response, next) => {
     });
 
     res.status(201).json(result);
-  } catch (err) { next(err); }
+  } catch (err: any) {
+    console.error('[music-bots] create failed:', err);
+    next(err instanceof AppError ? err : new AppError(400, `Could not create bot: ${err?.message ?? err}`));
+  }
 });
 
 // PUT /:id — Update bot config
