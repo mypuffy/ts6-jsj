@@ -6,7 +6,8 @@ import type { EnqueueMode, SearchProvider, TrackSearchResult } from '@ts6/common
 export const musicBotsApi = {
   list: () => api.get('/music-bots').then((r) => r.data),
   get: (id: number) => api.get(`/music-bots/${id}`).then((r) => r.data),
-  create: (data: any) => api.post('/music-bots', data).then((r) => r.data),
+  // Generating the bot identity (security level 23) can take 10-60 s
+  create: (data: any) => api.post('/music-bots', data, { timeout: 180000 }).then((r) => r.data),
   update: (id: number, data: any) => api.put(`/music-bots/${id}`, data).then((r) => r.data),
   delete: (id: number) => api.delete(`/music-bots/${id}`),
   start: (id: number) => api.post(`/music-bots/${id}/start`).then((r) => r.data),
