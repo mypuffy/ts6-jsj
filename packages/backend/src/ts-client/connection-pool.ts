@@ -14,7 +14,13 @@ export class ConnectionPool {
 
     for (const server of servers) {
       // H8: Decrypt API key before use
-      this.addClient(server.id, server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
+      try {
+        this.addClient(server.id, server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
+      } catch (err: any) {
+        // Wrong ENCRYPTION_KEY must not take the whole panel down – just skip this server
+        console.error(`[ConnectionPool] Cannot decrypt API key of server "${server.name}" (id ${server.id}): ${err.message}. ` +
+          'ENCRYPTION_KEY/JWT_SECRET changed? Re-enter the API key under Settings → Connections.');
+      }
     }
 
     console.log(`[ConnectionPool] Initialized ${this.clients.size} server connection(s)`);

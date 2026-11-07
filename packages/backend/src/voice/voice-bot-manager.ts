@@ -61,10 +61,15 @@ export class VoiceBotManager extends EventEmitter {
     for (const dbBot of dbBots) {
       let identity: IdentityData | undefined;
       if (dbBot.identityData) {
-        // H8: Decrypt identity data before parsing
-        const parsed = JSON.parse(decrypt(dbBot.identityData));
-        // Reconstruct KeyObjects from serialized scalar data
-        identity = restoreIdentity(parsed);
+        try {
+          // H8: Decrypt identity data before parsing
+          const parsed = JSON.parse(decrypt(dbBot.identityData));
+          // Reconstruct KeyObjects from serialized scalar data
+          identity = restoreIdentity(parsed);
+        } catch (err: any) {
+          console.error(`[VoiceBotManager] Bot ${dbBot.id} ("${dbBot.name}"): cannot decrypt identity (${err.message}) — ENCRYPTION_KEY changed? Delete and re-create this bot.`);
+          continue;
+        }
       }
       const config: VoiceBotConfig = {
         id: dbBot.id,
