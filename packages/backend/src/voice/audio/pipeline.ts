@@ -105,7 +105,7 @@ export class AudioPipeline {
    * Stream audio from a URL to raw PCM (for live radio streams).
    * Returns a readable stdout stream + kill function. Does NOT buffer the entire stream.
    */
-  async toPcmStream(url: string): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
+  async toPcmStream(url: string): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void; getError: () => string }> {
     return this.openPcmStream(url, { isLive: true });
   }
 
@@ -114,7 +114,7 @@ export class AudioPipeline {
    * Output is 48 kHz stereo s16le on stdout. Nothing is buffered in memory here –
    * the caller applies backpressure by pausing stdout.
    */
-  async openPcmStream(input: string, opts: PcmStreamOptions = {}): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
+  async openPcmStream(input: string, opts: PcmStreamOptions = {}): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void; getError: () => string }> {
     const isHttp = /^https?:\/\//i.test(input);
     if (isHttp) {
       // C4: Validate URL before passing to ffmpeg
@@ -160,9 +160,12 @@ export class AudioPipeline {
     );
 
     const ffmpeg = spawn('ffmpeg', args, { shell: false });
+    let errTail = '';
     ffmpeg.stderr?.on('data', (c: Buffer) => {
       const msg = c.toString().trim();
-      if (msg && process.env.VOICE_DEBUG === '1') console.log(`[ffmpeg] ${msg.slice(0, 300)}`);
+      if (!msg) return;
+      errTail = (errTail + '\n' + msg).slice(-600);
+      if (process.env.VOICE_DEBUG === '1') console.log(`[ffmpeg] ${msg.slice(0, 300)}`);
     });
     return {
       stdout: ffmpeg.stdout,
@@ -170,7 +173,53 @@ export class AudioPipeline {
       kill: () => {
         try { ffmpeg.kill('SIGKILL'); } catch { }
       },
+      getError: () => errTail.trim(),
     };
+  }
+
+  /**
+   * Fallback: let yt-dlp download the stream itself (handles YouTube PO tokens,
+   * cookies, DASH/HLS fragments) and pipe it into FFmpeg.
+   */
+  openYtDlpPcmStream(url: string, opts: { seek?: number; normalize?: boolean; ytdlpArgs?: string[] } = {}): { stdout: Readable; process: ChildProcess; kill: () => void; getError: () => string } {
+    const ytdlp = spawn('yt-dlp', [
+      ...(opts.ytdlpArgs ?? []),
+      '-f', 'bestaudio/best',
+      '--no-playlist',
+      '--no-part',
+      '--quiet', '--no-warnings',
+      '-o', '-',
+      url,
+    ], { shell: false });
+
+    const args: string[] = ['-hide_banner', '-nostdin'];
+    if (opts.seek && opts.seek > 0) args.push('-ss', opts.seek.toFixed(2));
+    args.push('-i', 'pipe:0', '-vn');
+    if (opts.normalize) args.push('-af', 'dynaudnorm=f=250:g=15:p=0.9:m=8');
+    args.push('-f', 's16le', '-acodec', 'pcm_s16le', '-ar', String(SAMPLE_RATE), '-ac', String(CHANNELS), '-loglevel', 'error', 'pipe:1');
+    const ffmpeg = spawn('ffmpeg', args, { shell: false });
+
+    ytdlp.stdout.pipe(ffmpeg.stdin);
+    ffmpeg.stdin.on('error', () => { /* EPIPE when ffmpeg is killed */ });
+    ytdlp.stdout.on('error', () => { });
+
+    let errTail = '';
+    const collect = (tag: string) => (c: Buffer) => {
+      const msg = c.toString().trim();
+      if (!msg) return;
+      errTail = (errTail + `\n[${tag}] ` + msg).slice(-600);
+      if (process.env.VOICE_DEBUG === '1') console.log(`[${tag}] ${msg.slice(0, 300)}`);
+    };
+    ytdlp.stderr.on('data', collect('yt-dlp'));
+    ffmpeg.stderr?.on('data', collect('ffmpeg'));
+    ytdlp.on('error', (e) => { errTail += `\n[yt-dlp] ${e.message}`; try { ffmpeg.stdin.end(); } catch { } });
+
+    const kill = () => {
+      try { ytdlp.kill('SIGKILL'); } catch { }
+      try { ffmpeg.kill('SIGKILL'); } catch { }
+    };
+    ffmpeg.on('close', () => { try { ytdlp.kill('SIGKILL'); } catch { } });
+    return { stdout: ffmpeg.stdout, process: ffmpeg, kill, getError: () => errTail.trim() };
   }
 
   private ffmpegToPcm(input: string): Promise<Buffer> {

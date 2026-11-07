@@ -116,6 +116,8 @@ interface ChannelClient {
 
 interface PlaybackSession {
   item: QueueItem;
+  getError: () => string;
+  viaYtDlp: boolean;
   stdout: Readable;
   proc: ChildProcess;
   kill: () => void;
@@ -172,6 +174,9 @@ export class VoiceBot extends EventEmitter {
   private statDtSum = 0;
   private statDtMin = Number.POSITIVE_INFINITY;
   private statDtMax = 0;
+
+  /** Queue items whose direct stream URL failed – these use the yt-dlp pipe */
+  private pipeModeItems = new WeakSet<QueueItem>();
 
   /** Recently played tracks, newest first */
   readonly history: HistoryEntry[] = [];
@@ -691,20 +696,35 @@ export class VoiceBot extends EventEmitter {
   }
 
   private async startSession(item: QueueItem, startAt: number, token: number, recoverCount: number): Promise<void> {
-    const src = await this.openSource(item);
-    if (token !== this.playToken) return;
+    // Items where the direct CDN URL failed are played through "yt-dlp -o - | ffmpeg"
+    const viaYtDlp = !!item.sourceUrl && this.pipeModeItems.has(item);
+    let stream: { stdout: Readable; process: ChildProcess; kill: () => void; getError: () => string };
+    let src: { input: string; headers: Record<string, string>; isLive: boolean };
 
-    const stream = await this.pipeline.openPcmStream(src.input, {
-      seek: src.isLive ? 0 : startAt,
-      headers: src.headers,
-      isLive: src.isLive,
-      normalize: this.config.normalize !== false,
-    });
+    if (viaYtDlp) {
+      src = { input: item.sourceUrl!, headers: {}, isLive: false };
+      stream = this.pipeline.openYtDlpPcmStream(item.sourceUrl!, {
+        seek: startAt,
+        normalize: this.config.normalize !== false,
+        ytdlpArgs: getCookieArgs(),
+      });
+    } else {
+      src = await this.openSource(item);
+      if (token !== this.playToken) return;
+      stream = await this.pipeline.openPcmStream(src.input, {
+        seek: src.isLive ? 0 : startAt,
+        headers: src.headers,
+        isLive: src.isLive,
+        normalize: this.config.normalize !== false,
+      });
+    }
     if (token !== this.playToken) { stream.kill(); return; }
 
     this.killSession();
     const sess: PlaybackSession = {
       item,
+      getError: stream.getError,
+      viaYtDlp,
       stdout: stream.stdout,
       proc: stream.process,
       kill: stream.kill,
@@ -751,10 +771,18 @@ export class VoiceBot extends EventEmitter {
     });
 
     // Wait for the first buffer so we can report errors (dead link, 403…) to the caller
-    await this.waitForBuffer(sess, 15_000);
+    await this.waitForBuffer(sess, viaYtDlp ? 30_000 : 15_000);
     if (sess !== this.session) return;
     if (sess.size === 0 && sess.ended) {
-      throw new Error(sess.exitCode === 0 ? 'Track is empty' : 'Could not decode audio stream');
+      const detail = sess.getError().split('\n').filter(Boolean).slice(-2).join(' | ');
+      if (!viaYtDlp && item.sourceUrl && !src.isLive) {
+        // Direct URL refused (YouTube PO token, expired signature, missing headers…) → retry through yt-dlp
+        console.warn(`[VoiceBot ${this.config.id}] Direct stream failed (${detail || 'no output'}) — retrying via yt-dlp pipe`);
+        this.pipeModeItems.add(item);
+        return this.startSession(item, startAt, token, recoverCount);
+      }
+      console.error(`[VoiceBot ${this.config.id}] Could not decode "${item.title}": ${detail}`);
+      throw new Error(sess.exitCode === 0 ? 'Track is empty' : `Could not decode audio stream${detail ? `: ${detail.slice(0, 200)}` : ''}`);
     }
 
     if (this._status === 'playing') this.startTickLoop(sess);
