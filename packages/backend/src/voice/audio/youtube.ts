@@ -35,6 +35,16 @@ export function getCookieArgs(): string[] {
   if (ytCookieFile) {
     args.push("--cookies", ytCookieFile);
   }
+  // YouTube PO tokens (fixes "HTTP Error 403: Forbidden") via the bgutil provider container
+  const pot = process.env.YTDLP_POT_PROVIDER_URL;
+  if (pot) {
+    args.push("--extractor-args", `youtubepot-bgutilhttp:base_url=${pot}`);
+  }
+  // Free-form extra yt-dlp arguments, e.g. YTDLP_EXTRA_ARGS='--extractor-args youtube:player_client=tv,web_safari'
+  const extra = process.env.YTDLP_EXTRA_ARGS?.trim();
+  if (extra) {
+    args.push(...(extra.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map((a) => a.replace(/^["']|["']$/g, "")));
+  }
   return args;
 }
 

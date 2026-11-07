@@ -29,6 +29,9 @@ services:
       SIDECAR_URL: http://sidecar:9800
       VOICE_DEBUG: ${VOICE_DEBUG:-0}
       TRUST_PROXY: ${TRUST_PROXY:-}
+      # YouTube anti-bot: PO-Token-Provider (behebt "HTTP Error 403: Forbidden")
+      YTDLP_POT_PROVIDER_URL: ${YTDLP_POT_PROVIDER_URL:-http://pot-provider:4416}
+      YTDLP_EXTRA_ARGS: ${YTDLP_EXTRA_ARGS:-}
     volumes:
       - backend-data:/app/packages/backend/data
       - music-data:/data/music
@@ -36,6 +39,7 @@ services:
       - "3001:3001"
     depends_on:
       - sidecar
+      - pot-provider
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -64,6 +68,13 @@ services:
       SIDECAR_PORT: 9800
     ports:
       - "9800:9800"
+
+  pot-provider:
+    # Erzeugt YouTube-PO-Tokens für yt-dlp (https://github.com/Brainicism/bgutil-ytdlp-pot-provider)
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    container_name: ts6jsj-pot
+    restart: unless-stopped
+    init: true
 
 volumes:
   backend-data:
