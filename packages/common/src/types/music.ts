@@ -25,6 +25,12 @@ export interface MusicBotSummary {
   nowPlayingNick?: boolean;
   commandPrefix?: string;
   defaultSearch?: SearchProvider;
+  djGroupIds?: string;
+  djOnly?: boolean;
+  maxQueuePerUser?: number;
+  voteSkipPercent?: number;
+  eqPreset?: string;
+  resumeQueue?: boolean;
   // Runtime
   listeners?: number;
   channelName?: string;
@@ -148,6 +154,8 @@ export interface PlaybackState {
   listeners?: { clid: number; nickname: string }[];
   history?: HistoryEntry[];
   lastError?: string;
+  eqPreset?: string;
+  sleepUntil?: number;
 }
 
 // === Playlist Types ===

@@ -10,6 +10,27 @@ export const BYTES_PER_FRAME = FRAME_SIZE * CHANNELS * 2; // 16-bit = 2 bytes pe
 export const FRAME_MS = 20;
 const BITRATE = 96000;
 
+/** Equalizer presets (FFmpeg audio filters), selectable per bot and via !eq */
+export const EQ_PRESETS: Record<string, { label: string; filter: string }> = {
+  flat: { label: 'Flat', filter: '' },
+  bass: { label: 'Bass', filter: 'bass=g=5:f=110:w=0.6' },
+  bassboost: { label: 'Bass Boost', filter: 'bass=g=9:f=90:w=0.6,alimiter=limit=0.95' },
+  techno: { label: 'Techno / Schranz', filter: 'bass=g=6:f=60:w=0.5,treble=g=3:f=8000,alimiter=limit=0.95' },
+  vocal: { label: 'Vocal / Podcast', filter: 'highpass=f=90,equalizer=f=2500:t=q:w=1:g=4,bass=g=-2' },
+  treble: { label: 'Treble', filter: 'treble=g=5:f=6000' },
+  night: { label: 'Night (compressed)', filter: 'acompressor=threshold=-22dB:ratio=4:attack=10:release=200:makeup=5,bass=g=-3' },
+  loud: { label: 'Loud', filter: 'acompressor=threshold=-18dB:ratio=3:makeup=6,alimiter=limit=0.95' },
+};
+
+export function buildAudioFilter(normalize?: boolean, eq?: string): string {
+  const parts: string[] = [];
+  const eqFilter = eq && EQ_PRESETS[eq] ? EQ_PRESETS[eq].filter : '';
+  if (eqFilter) parts.push(eqFilter);
+  // Normalizer last so the EQ never clips
+  if (normalize) parts.push('dynaudnorm=f=250:g=15:p=0.9:m=8');
+  return parts.join(',');
+}
+
 export interface PcmStreamOptions {
   /** Start position in seconds (ignored for live streams) */
   seek?: number;
@@ -19,6 +40,8 @@ export interface PcmStreamOptions {
   isLive?: boolean;
   /** Apply loudness normalization */
   normalize?: boolean;
+  /** EQ preset key (see EQ_PRESETS) */
+  eq?: string;
 }
 
 export class AudioPipeline {
@@ -145,10 +168,9 @@ export class AudioPipeline {
 
     args.push('-i', input, '-vn');
 
-    if (opts.normalize) {
-      // Dynamic normalizer: evens out loudness between quiet YouTube uploads and loud SoundCloud masters
-      args.push('-af', 'dynaudnorm=f=250:g=15:p=0.9:m=8');
-    }
+    // EQ preset + dynamic normalizer (evens out quiet YouTube uploads vs. loud SoundCloud masters)
+    const af = buildAudioFilter(opts.normalize, opts.eq);
+    if (af) args.push('-af', af);
 
     args.push(
       '-f', 's16le',
@@ -181,7 +203,7 @@ export class AudioPipeline {
    * Fallback: let yt-dlp download the stream itself (handles YouTube PO tokens,
    * cookies, DASH/HLS fragments) and pipe it into FFmpeg.
    */
-  openYtDlpPcmStream(url: string, opts: { seek?: number; normalize?: boolean; ytdlpArgs?: string[] } = {}): { stdout: Readable; process: ChildProcess; kill: () => void; getError: () => string } {
+  openYtDlpPcmStream(url: string, opts: { seek?: number; normalize?: boolean; eq?: string; ytdlpArgs?: string[] } = {}): { stdout: Readable; process: ChildProcess; kill: () => void; getError: () => string } {
     const ytdlp = spawn('yt-dlp', [
       ...(opts.ytdlpArgs ?? []),
       '-f', 'bestaudio/best',
@@ -195,7 +217,8 @@ export class AudioPipeline {
     const args: string[] = ['-hide_banner', '-nostdin'];
     if (opts.seek && opts.seek > 0) args.push('-ss', opts.seek.toFixed(2));
     args.push('-i', 'pipe:0', '-vn');
-    if (opts.normalize) args.push('-af', 'dynaudnorm=f=250:g=15:p=0.9:m=8');
+    const af = buildAudioFilter(opts.normalize, opts.eq);
+    if (af) args.push('-af', af);
     args.push('-f', 's16le', '-acodec', 'pcm_s16le', '-ar', String(SAMPLE_RATE), '-ac', String(CHANNELS), '-loglevel', 'error', 'pipe:1');
     const ffmpeg = spawn('ffmpeg', args, { shell: false });
 

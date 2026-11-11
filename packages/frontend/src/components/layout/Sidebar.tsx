@@ -2,7 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Server, Hash, Users, Shield, ShieldCheck,
   Lock, Ban, KeyRound, FolderOpen, MessageSquareWarning, Mail,
-  ScrollText, Settings, Workflow, Cpu, PanelLeftClose, PanelLeftOpen, Disc3, History,
+  ScrollText, Settings, Workflow, Cpu, PanelLeftClose, PanelLeftOpen, Disc3, History, LayoutTemplate,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/stores/ui.store';
@@ -32,6 +32,7 @@ const navSections: { label: string; adminOnly?: boolean; items: NavItem[] }[] = 
     label: 'Server',
     items: [
       { to: '/servers', icon: Server, label: 'Virtual Servers', adminOnly: true },
+      { to: '/server-templates', icon: LayoutTemplate, label: 'Server Templates', adminOnly: true },
       { to: '/channels', icon: Hash, label: 'Channels' },
       { to: '/clients', icon: Users, label: 'Clients' },
       { to: '/server-groups', icon: Shield, label: 'Server Groups', adminOnly: true },

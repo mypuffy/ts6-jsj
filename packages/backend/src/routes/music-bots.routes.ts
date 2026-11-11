@@ -9,13 +9,15 @@ import {
   saveMusicRequest, type EnqueueMode,
 } from '../voice/music-service.js';
 import { isUrl, type SearchProvider } from '../voice/audio/sources.js';
+import { EQ_PRESETS } from '../voice/audio/pipeline.js';
+import { musicSettingsFromDb } from '../voice/voice-bot-manager.js';
 
 export const musicBotRoutes: Router = Router();
 
 // All routes require admin role
 musicBotRoutes.use(requireRole('admin'));
 
-const SETTINGS_KEYS = ['normalize', 'autoplay', 'announce', 'autoPauseEmpty', 'nowPlayingNick'] as const;
+const SETTINGS_KEYS = ['normalize', 'autoplay', 'announce', 'autoPauseEmpty', 'nowPlayingNick', 'djOnly', 'resumeQueue'] as const;
 
 function parseMode(v: any): EnqueueMode {
   return v === 'now' || v === 'next' ? v : 'queue';
@@ -30,6 +32,13 @@ function pickSettings(body: any) {
   for (const k of SETTINGS_KEYS) if (typeof body[k] === 'boolean') out[k] = body[k];
   if (typeof body.commandPrefix === 'string' && body.commandPrefix.trim()) out.commandPrefix = body.commandPrefix.trim().slice(0, 3);
   if (body.defaultSearch === 'youtube' || body.defaultSearch === 'soundcloud') out.defaultSearch = body.defaultSearch;
+  if (typeof body.djGroupIds === 'string' || Array.isArray(body.djGroupIds)) {
+    out.djGroupIds = (Array.isArray(body.djGroupIds) ? body.djGroupIds.join(',') : body.djGroupIds)
+      .split(/[,\s]+/).map((x: string) => parseInt(x)).filter((x: number) => !isNaN(x) && x > 0).join(',');
+  }
+  if (body.maxQueuePerUser !== undefined) out.maxQueuePerUser = Math.max(0, Math.min(100, parseInt(body.maxQueuePerUser) || 0));
+  if (body.voteSkipPercent !== undefined) out.voteSkipPercent = Math.max(1, Math.min(100, parseInt(body.voteSkipPercent) || 50));
+  if (typeof body.eqPreset === 'string' && EQ_PRESETS[body.eqPreset]) out.eqPreset = body.eqPreset;
   return out;
 }
 
@@ -64,6 +73,12 @@ function serializeBot(b: any, runtime: any) {
     nowPlayingNick: b.nowPlayingNick ?? true,
     commandPrefix: b.commandPrefix ?? '!',
     defaultSearch: b.defaultSearch ?? 'youtube',
+    djGroupIds: b.djGroupIds ?? '',
+    djOnly: b.djOnly ?? false,
+    maxQueuePerUser: b.maxQueuePerUser ?? 0,
+    voteSkipPercent: b.voteSkipPercent ?? 50,
+    eqPreset: b.eqPreset ?? 'flat',
+    resumeQueue: b.resumeQueue ?? true,
     status: runtime?.status ?? 'stopped',
     nowPlaying: runtime?.nowPlaying ?? null,
     listeners: runtime?.listeners ?? 0,
@@ -72,6 +87,11 @@ function serializeBot(b: any, runtime: any) {
     createdAt: b.createdAt,
   };
 }
+
+// GET /meta/eq-presets
+musicBotRoutes.get('/meta/eq-presets', (_req: Request, res: Response) => {
+  res.json(Object.entries(EQ_PRESETS).map(([key, v]) => ({ key, label: v.label })));
+});
 
 // GET / — List all music bots
 musicBotRoutes.get('/', async (req: Request, res: Response, next) => {
@@ -147,7 +167,7 @@ musicBotRoutes.put('/:id', async (req: Request, res: Response, next) => {
     const { name, nickname, serverPassword, defaultChannel, channelPassword, voicePort, volume, autoStart } = req.body;
     const settings = pickSettings(req.body);
 
-    await prisma.musicBot.update({
+    const updated = await prisma.musicBot.update({
       where: { id },
       data: {
         ...(name != null && { name }),
@@ -173,7 +193,7 @@ musicBotRoutes.put('/:id', async (req: Request, res: Response, next) => {
         ...(channelPassword !== undefined && { channelPassword: channelPassword || undefined }),
         ...(voicePort != null && { serverPort: parseInt(voicePort) }),
         ...(volume != null && { volume: parseInt(volume) }),
-        ...settings,
+        ...musicSettingsFromDb(updated),
       });
     }
 
@@ -397,6 +417,8 @@ musicBotRoutes.get('/:id/state', async (req: Request, res: Response, next) => {
       loading: bot.loading,
       autoplay: !!cfg.autoplay,
       autoPaused: bot.autoPaused,
+      eqPreset: bot.eqPreset,
+      sleepUntil: bot.sleepUntil,
       channelId: running ? bot.channelId : 0,
       channelName: running ? bot.channelName : '',
       listeners: running ? bot.channelListeners : [],
@@ -404,6 +426,27 @@ musicBotRoutes.get('/:id/state', async (req: Request, res: Response, next) => {
       lastError: bot.lastError,
       videoStream: bot.videoStreamStatus,
     });
+  } catch (err) { next(err); }
+});
+
+// POST /:id/eq  { preset }
+musicBotRoutes.post('/:id/eq', async (req: Request, res: Response, next) => {
+  try {
+    const bot = getRunningBot(req);
+    const preset = String(req.body.preset || 'flat');
+    if (!EQ_PRESETS[preset]) throw new AppError(400, 'Unknown EQ preset');
+    bot.setEq(preset);
+    await req.app.locals.prisma.musicBot.update({ where: { id: bot.id }, data: { eqPreset: preset } });
+    res.json({ success: true, eqPreset: preset });
+  } catch (err) { next(err); }
+});
+
+// POST /:id/sleep  { minutes }  (0 = cancel)
+musicBotRoutes.post('/:id/sleep', async (req: Request, res: Response, next) => {
+  try {
+    const bot = getRunningBot(req);
+    bot.setSleepTimer(Math.max(0, parseInt(req.body.minutes) || 0));
+    res.json({ success: true, sleepUntil: bot.sleepUntil });
   } catch (err) { next(err); }
 });
 

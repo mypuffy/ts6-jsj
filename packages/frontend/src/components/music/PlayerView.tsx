@@ -9,6 +9,7 @@ import {
   usePausePlayback, useResumePlayback, useStopPlayback, useSkipTrack, usePreviousTrack, useSeek, useSetVolume,
   useSetShuffle, useSetRepeat, useSetAutoplay, usePlayUrl, useQueueTrack, usePlaySong, useEnqueue,
   useRemoveFromQueue, usePlayFromQueue, useMoveQueueItem, useClearUpcoming, useBotChannels, useMoveBot, useLoadPlaylist,
+  useSetEq, useSetSleep, useEqPresets,
 } from '@/hooks/use-music-bots';
 import { useSongs, useTrackSearch, useDownloadTrack } from '@/hooks/use-music-library';
 import { useRadioStations, usePlayRadio } from '@/hooks/use-radio-stations';
@@ -29,7 +30,7 @@ import { EmptyState } from '@/components/shared/EmptyState';
 import {
   Play, Pause, SkipBack, SkipForward, Shuffle, Repeat, Repeat1, Volume2, VolumeX, Volume1, Plus, Search,
   Loader2, Power, PowerOff, MoreHorizontal, Pencil, Trash2, Link2, ListPlus, ListStart, Download, X,
-  ChevronUp, ChevronDown, Infinity as InfinityIcon, Users, Hash, Radio, Library, Disc3, History, Square, ListMusic, Terminal,
+  ChevronUp, ChevronDown, Infinity as InfinityIcon, SlidersHorizontal, Moon, Users, Hash, Radio, Library, Disc3, History, Square, ListMusic, Terminal,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { SourceIcon, SoundCloudIcon } from './SourceIcon';
@@ -121,6 +122,9 @@ function NowPlaying({ bot, state, onEdit, onDelete }: { bot: MusicBotSummary; st
   const shuffle = useSetShuffle();
   const repeat = useSetRepeat();
   const autoplay = useSetAutoplay();
+  const setEq = useSetEq();
+  const setSleep = useSetSleep();
+  const { data: eqPresets } = useEqPresets();
   const [dragSeek, setDragSeek] = useState<number | null>(null);
   const [dragVol, setDragVol] = useState<number | null>(null);
   const [muteFrom, setMuteFrom] = useState<number | null>(null);
@@ -300,6 +304,43 @@ function NowPlaying({ bot, state, onEdit, onDelete }: { bot: MusicBotSummary; st
             <Switch className="scale-75" checked={!!state?.autoplay} disabled={!running}
               onCheckedChange={(v) => autoplay.mutate({ botId: bot.id, enabled: v })} />
           </label>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className={cn('h-8 rounded-full text-xs', state?.eqPreset && state.eqPreset !== 'flat' && 'border-primary/50 text-primary')} disabled={!running}>
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                {(eqPresets ?? []).find((p) => p.key === (state?.eqPreset ?? 'flat'))?.label ?? 'EQ'}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-48">
+              {(eqPresets ?? []).map((p) => (
+                <DropdownMenuItem key={p.key} onClick={() => setEq.mutate({ botId: bot.id, preset: p.key }, { onSuccess: () => toast.success(`EQ: ${p.label}`) })}>
+                  <span className={cn('mr-2 h-1.5 w-1.5 rounded-full', (state?.eqPreset ?? 'flat') === p.key ? 'bg-primary' : 'bg-transparent')} />
+                  {p.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className={cn('h-8 rounded-full text-xs', !!state?.sleepUntil && 'border-primary/50 text-primary')} disabled={!running}>
+                <Moon className="h-3.5 w-3.5" />
+                {state?.sleepUntil ? `${Math.max(1, Math.ceil((state.sleepUntil - Date.now()) / 60000))} min` : 'Sleep'}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-40">
+              {[15, 30, 45, 60, 90, 120].map((m) => (
+                <DropdownMenuItem key={m} onClick={() => setSleep.mutate({ botId: bot.id, minutes: m }, { onSuccess: () => toast.success(`Music stops in ${m} min`) })}>{m} minutes</DropdownMenuItem>
+              ))}
+              {!!state?.sleepUntil && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setSleep.mutate({ botId: bot.id, minutes: 0 })}>Cancel timer</DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <div className="ml-auto flex w-full items-center gap-2 sm:w-56">
             <button
@@ -694,7 +735,9 @@ function CommandHint({ prefix }: { prefix: string }) {
   const cmds = [
     ['play <link|text>', 'play / queue'], ['sc <text>', 'SoundCloud'], ['search <text>', 'then pick <n>'],
     ['skip', 'next track'], ['queue', 'show queue'], ['vol 40', 'volume'], ['seek 1:30', 'jump'],
-    ['loop', 'repeat mode'], ['autoplay', 'toggle'], ['join', 'come to my channel'], ['help', 'all commands'],
+    ['loop', 'repeat mode'], ['autoplay', 'toggle'], ['join', 'come to my channel'],
+    ['voteskip', 'vote to skip'], ['save', 'save to favourites'], ['top', 'most requested'], ['eq techno', 'equalizer'], ['sleep 30', 'sleep timer'],
+    ['help', 'all commands'],
   ];
   return (
     <Card>

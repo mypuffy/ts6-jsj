@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import type { MusicBotSummary } from '@ts6/common';
-import { useCreateMusicBot, useUpdateMusicBot } from '@/hooks/use-music-bots';
+import { useCreateMusicBot, useUpdateMusicBot, useEqPresets } from '@/hooks/use-music-bots';
 import { useServers } from '@/hooks/use-servers';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +17,7 @@ const EMPTY = {
   voicePort: 9987, volume: 40, autoStart: true,
   normalize: true, autoplay: false, announce: true, autoPauseEmpty: true, nowPlayingNick: true,
   commandPrefix: '!', defaultSearch: 'youtube' as 'youtube' | 'soundcloud',
+  djGroupIds: '', djOnly: false, maxQueuePerUser: 0, voteSkipPercent: 50, eqPreset: 'flat', resumeQueue: true,
 };
 
 function ToggleRow({ label, hint, checked, onChange }: { label: string; hint: string; checked: boolean; onChange: (v: boolean) => void }) {
@@ -33,6 +34,7 @@ function ToggleRow({ label, hint, checked, onChange }: { label: string; hint: st
 
 export function BotFormDialog({ open, bot, onClose }: { open: boolean; bot: MusicBotSummary | null; onClose: () => void }) {
   const { data: servers } = useServers();
+  const { data: eqPresets } = useEqPresets();
   const createBot = useCreateMusicBot();
   const updateBot = useUpdateMusicBot();
   const [form, setForm] = useState(EMPTY);
@@ -59,6 +61,12 @@ export function BotFormDialog({ open, bot, onClose }: { open: boolean; bot: Musi
         nowPlayingNick: bot.nowPlayingNick ?? true,
         commandPrefix: bot.commandPrefix || '!',
         defaultSearch: bot.defaultSearch === 'soundcloud' ? 'soundcloud' : 'youtube',
+        djGroupIds: bot.djGroupIds ?? '',
+        djOnly: bot.djOnly ?? false,
+        maxQueuePerUser: bot.maxQueuePerUser ?? 0,
+        voteSkipPercent: bot.voteSkipPercent ?? 50,
+        eqPreset: bot.eqPreset ?? 'flat',
+        resumeQueue: bot.resumeQueue ?? true,
       });
     } else {
       setForm({ ...EMPTY, serverConfigId: serverList[0] ? String(serverList[0].id) : '' });
@@ -101,6 +109,7 @@ export function BotFormDialog({ open, bot, onClose }: { open: boolean; bot: Musi
           <TabsList className="w-full">
             <TabsTrigger value="connection" className="flex-1">Connection</TabsTrigger>
             <TabsTrigger value="behaviour" className="flex-1">Behaviour</TabsTrigger>
+            <TabsTrigger value="dj" className="flex-1">DJ & Community</TabsTrigger>
           </TabsList>
 
           <TabsContent value="connection" className="space-y-3 pt-2">
@@ -174,6 +183,37 @@ export function BotFormDialog({ open, bot, onClose }: { open: boolean; bot: Musi
             <ToggleRow label="Announce tracks in channel" hint="Posts “Now playing …” with link into the channel chat" checked={form.announce} onChange={(v) => set('announce', v)} />
             <ToggleRow label="Pause when channel is empty" hint="Resumes automatically when someone joins" checked={form.autoPauseEmpty} onChange={(v) => set('autoPauseEmpty', v)} />
             <ToggleRow label="Track in nickname" hint="Shows “MusicBot ♪ Title” as nickname" checked={form.nowPlayingNick} onChange={(v) => set('nowPlayingNick', v)} />
+            <ToggleRow label="Resume after restart" hint="Queue and position are saved and continue after a panel/bot restart" checked={form.resumeQueue} onChange={(v) => set('resumeQueue', v)} />
+            <div className="pt-1">
+              <Label className="text-xs">Equalizer</Label>
+              <Select value={form.eqPreset} onValueChange={(v) => set('eqPreset', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {(eqPresets ?? [{ key: 'flat', label: 'Flat' }]).map((p) => <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="dj" className="space-y-2 pt-2">
+            <div>
+              <Label className="text-xs">DJ server group IDs</Label>
+              <Input value={form.djGroupIds} onChange={(e) => set('djGroupIds', e.target.value)} placeholder="e.g. 9, 12" className="font-mono-data" />
+              <p className="mt-1 text-[11px] text-muted-foreground">IDs from the Server Groups page. Empty = everybody counts as DJ.</p>
+            </div>
+            <ToggleRow label="DJ-only control" hint="Skip, volume, stop, seek, clear … only for DJ groups. Everyone else can request songs and !voteskip." checked={form.djOnly} onChange={(v) => set('djOnly', v)} />
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <div>
+                <Label className="text-xs">Max. tracks per user in queue</Label>
+                <Input type="number" min={0} max={100} value={form.maxQueuePerUser} onChange={(e) => set('maxQueuePerUser', parseInt(e.target.value) || 0)} />
+                <p className="mt-1 text-[11px] text-muted-foreground">0 = unlimited · DJs are exempt</p>
+              </div>
+              <div>
+                <Label className="text-xs">Vote-skip needs · {form.voteSkipPercent}%</Label>
+                <Slider className="mt-3" value={[form.voteSkipPercent]} min={10} max={100} step={5} onValueChange={([v]) => set('voteSkipPercent', v)} />
+                <p className="mt-2 text-[11px] text-muted-foreground">of listeners in the channel</p>
+              </div>
+            </div>
           </TabsContent>
         </Tabs>
 

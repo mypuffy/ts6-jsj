@@ -159,6 +159,14 @@ model MusicBot {
   nowPlayingNick  Boolean   @default(true)
   commandPrefix   String    @default("!")
   defaultSearch   String    @default("youtube") // youtube | soundcloud
+  // DJ / community features
+  djGroupIds      String    @default("")   // comma separated server group ids
+  djOnly          Boolean   @default(false) // control commands only for DJ groups
+  maxQueuePerUser Int       @default(0)     // 0 = unlimited
+  voteSkipPercent Int       @default(50)
+  eqPreset        String    @default("flat")
+  resumeQueue     Boolean   @default(true)
+  savedQueue      String?   // JSON snapshot for resume after restart
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -255,4 +263,14 @@ model StreamSession {
   startedAt      DateTime  @default(now())
   endedAt        DateTime?
   peakViewers    Int       @default(0)
+}
+
+// Saved / imported server layout templates (channels, groups, icons) as JSON
+model ServerLayoutTemplate {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String   @default("")
+  data        String   // JSON of ServerTemplate
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

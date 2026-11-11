@@ -22,6 +22,12 @@ export function musicSettingsFromDb(dbBot: any): Partial<VoiceBotConfig> {
     nowPlayingNick: dbBot.nowPlayingNick ?? true,
     commandPrefix: dbBot.commandPrefix || '!',
     defaultSearch: dbBot.defaultSearch === 'soundcloud' ? 'soundcloud' : 'youtube',
+    djGroupIds: String(dbBot.djGroupIds ?? '').split(/[,\s]+/).map((x) => parseInt(x)).filter((x) => !isNaN(x) && x > 0),
+    djOnly: dbBot.djOnly ?? false,
+    maxQueuePerUser: dbBot.maxQueuePerUser ?? 0,
+    voteSkipPercent: dbBot.voteSkipPercent ?? 50,
+    eqPreset: dbBot.eqPreset || 'flat',
+    resumeQueue: dbBot.resumeQueue ?? true,
   };
 }
 
@@ -51,7 +57,60 @@ export class VoiceBotManager extends EventEmitter {
     }
   }
 
+  private persistTimer: ReturnType<typeof setInterval> | null = null;
+  private persistPending = new Map<number, ReturnType<typeof setTimeout>>();
+  /** Bots whose saved queue has not been restored yet – never overwrite it in that window */
+  private restorePending = new Set<number>();
+
+  /** Save the queue of a bot (debounced) so it can resume after a restart. */
+  persistQueue(botId: number, immediate = false): void {
+    const bot = this.bots.get(botId);
+    if (!bot || !bot.currentConfig.resumeQueue || this.restorePending.has(botId)) return;
+    // A disconnect / shutdown must not overwrite the last "playing" snapshot
+    if (bot.status === 'stopped' || bot.status === 'starting' || bot.status === 'error') return;
+    const run = () => {
+      this.persistPending.delete(botId);
+      const snap = bot.snapshot();
+      (this.prisma as any).musicBot.update({ where: { id: botId }, data: { savedQueue: JSON.stringify(snap) } })
+        .catch((err: any) => console.error(`[VoiceBotManager] Could not save queue of bot ${botId}: ${err.message}`));
+    };
+    const pending = this.persistPending.get(botId);
+    if (pending) clearTimeout(pending);
+    if (immediate) run();
+    else this.persistPending.set(botId, setTimeout(run, 2000));
+  }
+
+  private async restoreQueue(botId: number): Promise<void> {
+    try {
+      await this.doRestoreQueue(botId);
+    } finally {
+      this.restorePending.delete(botId);
+    }
+  }
+
+  private async doRestoreQueue(botId: number): Promise<void> {
+    const bot = this.bots.get(botId);
+    if (!bot || !bot.currentConfig.resumeQueue) return;
+    const row: any = await this.prisma.musicBot.findUnique({ where: { id: botId } });
+    if (!row?.savedQueue) return;
+    try {
+      const snap = JSON.parse(row.savedQueue);
+      // Ignore very old snapshots (> 7 days)
+      if (!snap?.savedAt || Date.now() - snap.savedAt > 7 * 86400_000) return;
+      const ok = await bot.restore(snap);
+      if (ok) console.log(`[VoiceBotManager] Bot ${botId}: restored queue (${snap.items.length} tracks${snap.playing ? ', resuming playback' : ''})`);
+    } catch (err: any) {
+      console.warn(`[VoiceBotManager] Bot ${botId}: could not restore queue: ${err.message}`);
+    }
+  }
+
   async start(): Promise<void> {
+    if (!this.persistTimer) {
+      // Keep the position fresh while playing (survives crashes / container updates)
+      this.persistTimer = setInterval(() => {
+        for (const [id, bot] of this.bots) if (bot.status === 'playing') this.persistQueue(id, true);
+      }, 15_000);
+    }
     const dbBots = await this.prisma.musicBot.findMany({
       include: { serverConfig: true },
     });
@@ -105,6 +164,7 @@ export class VoiceBotManager extends EventEmitter {
 
     bot.on('statusChange', (status: VoiceBotStatus) => {
       this.broadcast('music:bot:status', { botId: config.id, status });
+      if (status === 'connected' || status === 'paused') this.persistQueue(config.id);
 
       if (status === 'playing') {
         this.startProgressBroadcast(config.id);
@@ -118,6 +178,7 @@ export class VoiceBotManager extends EventEmitter {
     });
 
     bot.on('nowPlaying', (item: QueueItem) => {
+      this.persistQueue(config.id);
       const progress = bot.playbackProgress;
       this.broadcast('music:bot:nowPlaying', {
         botId: config.id,
@@ -128,6 +189,17 @@ export class VoiceBotManager extends EventEmitter {
 
     bot.on('trackEnd', (item: QueueItem | null) => {
       this.broadcast('music:bot:trackEnd', { botId: config.id, songId: item?.id ?? null });
+      this.persistQueue(config.id);
+    });
+
+    let restoredOnce = false;
+    bot.on('connected', () => {
+      // Only right after (re)connect with an empty in-memory queue, or once after process start
+      if (!restoredOnce || bot.queue.length === 0) {
+        restoredOnce = true;
+        this.restorePending.add(config.id);
+        setTimeout(() => this.restoreQueue(config.id), 1500);
+      }
     });
 
     bot.on('volumeChange', (volume: number) => {
@@ -209,6 +281,12 @@ export class VoiceBotManager extends EventEmitter {
     nowPlayingNick?: boolean;
     commandPrefix?: string;
     defaultSearch?: string;
+    djGroupIds?: string;
+    djOnly?: boolean;
+    maxQueuePerUser?: number;
+    voteSkipPercent?: number;
+    eqPreset?: string;
+    resumeQueue?: boolean;
   }): Promise<{ id: number }> {
     // Enforce bot limit
     const limitSetting = await this.prisma.appSetting.findUnique({ where: { key: 'max_music_bots' } });
@@ -249,6 +327,12 @@ export class VoiceBotManager extends EventEmitter {
         ...(data.nowPlayingNick !== undefined && { nowPlayingNick: data.nowPlayingNick }),
         ...(data.commandPrefix && { commandPrefix: data.commandPrefix }),
         ...(data.defaultSearch && { defaultSearch: data.defaultSearch }),
+        ...(data.djGroupIds !== undefined && { djGroupIds: data.djGroupIds }),
+        ...(data.djOnly !== undefined && { djOnly: data.djOnly }),
+        ...(data.maxQueuePerUser !== undefined && { maxQueuePerUser: data.maxQueuePerUser }),
+        ...(data.voteSkipPercent !== undefined && { voteSkipPercent: data.voteSkipPercent }),
+        ...(data.eqPreset && { eqPreset: data.eqPreset }),
+        ...(data.resumeQueue !== undefined && { resumeQueue: data.resumeQueue }),
       } as any,
     });
 
@@ -337,6 +421,9 @@ export class VoiceBotManager extends EventEmitter {
   }
 
   async stopAll(): Promise<void> {
+    if (this.persistTimer) { clearInterval(this.persistTimer); this.persistTimer = null; }
+    // Save the latest positions before shutting down
+    for (const [id, bot] of this.bots) if (bot.status === 'playing' || bot.status === 'paused') this.persistQueue(id, true);
     // Clear all reconnect timers first to prevent reconnect during shutdown
     for (const [id, state] of this.reconnectState) {
       if (state.timer) clearTimeout(state.timer);

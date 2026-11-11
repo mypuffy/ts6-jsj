@@ -26,6 +26,7 @@ const Login = lazy(() => import('@/pages/Login'));
 const Dashboard = lazy(() => import('@/pages/Dashboard'));
 const VirtualServers = lazy(() => import('@/pages/VirtualServers'));
 const Channels = lazy(() => import('@/pages/Channels'));
+const ServerTemplates = lazy(() => import('@/pages/ServerTemplates'));
 const Clients = lazy(() => import('@/pages/Clients'));
 const ServerGroups = lazy(() => import('@/pages/ServerGroups'));
 const ChannelGroups = lazy(() => import('@/pages/ChannelGroups'));
@@ -61,6 +62,7 @@ export function App() {
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/servers" element={<AdminRoute><VirtualServers /></AdminRoute>} />
               <Route path="/channels" element={<Channels />} />
+              <Route path="/server-templates" element={<AdminRoute><ServerTemplates /></AdminRoute>} />
               <Route path="/clients" element={<Clients />} />
               <Route path="/server-groups" element={<AdminRoute><ServerGroups /></AdminRoute>} />
               <Route path="/channel-groups" element={<AdminRoute><ChannelGroups /></AdminRoute>} />

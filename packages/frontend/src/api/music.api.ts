@@ -22,6 +22,9 @@ export const musicBotsApi = {
     api.post(`/music-bots/${id}/play-url`, { url, mode, provider }, { timeout: 90000 }).then((r) => r.data),
   queueTrack: (id: number, track: TrackSearchResult, mode?: EnqueueMode) =>
     api.post(`/music-bots/${id}/queue/track`, { track, mode }, { timeout: 60000 }).then((r) => r.data),
+  eq: (id: number, preset: string) => api.post(`/music-bots/${id}/eq`, { preset }).then((r) => r.data),
+  sleep: (id: number, minutes: number) => api.post(`/music-bots/${id}/sleep`, { minutes }).then((r) => r.data),
+  eqPresets: () => api.get('/music-bots/meta/eq-presets').then((r) => r.data as { key: string; label: string }[]),
   autoplay: (id: number, enabled: boolean) => api.post(`/music-bots/${id}/autoplay`, { enabled }).then((r) => r.data),
   channels: (id: number) => api.get(`/music-bots/${id}/channels`).then((r) => r.data),
   move: (id: number, cid: number) => api.post(`/music-bots/${id}/move`, { cid }).then((r) => r.data),

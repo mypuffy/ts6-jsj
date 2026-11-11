@@ -2,6 +2,8 @@
 
 Fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) with a rebuilt music bot (streaming engine, **SoundCloud**, autoplay, search, new chat commands), a new UI design and more flow templates. Changes in German: [CHANGES-JSJ.md](CHANGES-JSJ.md).
 
+**New:** Server Templates (complete channel/group/icon layouts in one click, export/import as JSON) and DJ features for the music bot (DJ groups, vote-skip, EQ presets, sleep timer, favourites, resume after restart).
+
 ## Install / update (Docker, e.g. Dockge on Proxmox)
 
 ```bash

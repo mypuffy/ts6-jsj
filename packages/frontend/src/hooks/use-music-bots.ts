@@ -342,3 +342,24 @@ export function useKickVideoViewer() {
     onSuccess: (_, { botId }) => qc.invalidateQueries({ queryKey: ['video-stream-status', botId] }),
   });
 }
+
+
+export function useEqPresets() {
+  return useQuery({ queryKey: ['eq-presets'], queryFn: musicBotsApi.eqPresets, staleTime: Infinity });
+}
+
+export function useSetEq() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ botId, preset }: { botId: number; preset: string }) => musicBotsApi.eq(botId, preset),
+    onSuccess: (_, { botId }) => { qc.invalidateQueries({ queryKey: ['music-bot-state', botId] }); qc.invalidateQueries({ queryKey: ['music-bots'] }); },
+  });
+}
+
+export function useSetSleep() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ botId, minutes }: { botId: number; minutes: number }) => musicBotsApi.sleep(botId, minutes),
+    onSuccess: (_, { botId }) => qc.invalidateQueries({ queryKey: ['music-bot-state', botId] }),
+  });
+}

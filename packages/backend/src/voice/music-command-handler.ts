@@ -3,6 +3,7 @@ import { VoiceBotManager } from './voice-bot-manager.js';
 import type { VoiceBot } from './voice-bot.js';
 import type { RepeatMode } from './playlist/queue.js';
 import { searchTracks, formatDuration, parseTimestamp, isUrl, type SearchProvider, type TrackInfo } from './audio/sources.js';
+import { EQ_PRESETS } from './audio/pipeline.js';
 import {
   resolveInput, enqueueItems, trackToQueueItem, songToQueueItem, stationToQueueItem,
   saveMusicRequest, type EnqueueMode,
@@ -29,6 +30,14 @@ interface CommandContext {
 type Handler = (ctx: CommandContext) => Promise<void> | void;
 
 const HEAVY_COOLDOWN_MS = 1500;
+
+/** Commands that only DJs may use when "DJ only" is enabled (aliases included) */
+const DJ_COMMANDS = new Set([
+  'skip', 'next', 'n', 'fs', 'prev', 'back', 'previous', 'pause', 'resume', 'continue', 'stop',
+  'vol', 'volume', 'v', 'seek', 'goto', 'ff', 'forward', 'rw', 'rewind', 'clear', 'shuffle', 'mix',
+  'loop', 'repeat', 'move', 'mv', 'playnow', 'pnow', 'autoplay', 'ap', 'eq', 'sleep', 'join', 'summon',
+  'come', 'stream', 'stopstream', 'radio',
+]);
 const QUEUE_PAGE = 10;
 
 export class MusicCommandHandler {
@@ -36,6 +45,8 @@ export class MusicCommandHandler {
   /** Pending search results per bot+user for "!pick <n>" */
   private pendingSearch = new Map<string, { results: TrackInfo[]; at: number }>();
   private lastHeavy = new Map<string, number>();
+  /** Vote-skip state per bot: track uid → voters */
+  private votes = new Map<number, { uid: string; voters: Set<number> }>();
   private commands: Map<string, { handler: Handler; heavy?: boolean }>;
 
   constructor(
@@ -78,6 +89,12 @@ export class MusicCommandHandler {
     reg(['stream'], (c) => this.cmdStream(c), true);
     reg(['stopstream'], (c) => this.cmdStopStream(c));
     reg(['viewers'], (c) => this.cmdViewers(c));
+    reg(['voteskip', 'vs'], (c) => this.cmdVoteSkip(c));
+    reg(['save', 'fav', 'like'], (c) => this.cmdSave(c));
+    reg(['top', 'charts'], (c) => this.cmdTop(c));
+    reg(['eq', 'equalizer'], (c) => this.cmdEq(c));
+    reg(['sleep', 'timer'], (c) => this.cmdSleep(c));
+    reg(['dj'], (c) => this.cmdDj(c));
     reg(['help', 'commands', 'h'], (c) => this.cmdHelp(c));
   }
 
@@ -140,6 +157,12 @@ export class MusicCommandHandler {
 
     console.log(`[MusicCmd] Bot ${botId}: ${prefix}${command} ${args} (from ${nickname})`);
 
+    if (bot.currentConfig.djOnly && DJ_COMMANDS.has(command) && !bot.isDj(clid)) {
+      const isSkip = ['skip', 'next', 'n', 'fs'].includes(command);
+      reply(isSkip ? `Only DJs can skip directly – use [b]${prefix}voteskip[/b].` : `🎧 Only DJs can use ${prefix}${command}.`);
+      return;
+    }
+
     try {
       await entry.handler({ botId, bot, clid, nickname, args, reply });
     } catch (err: any) {
@@ -193,10 +216,27 @@ export class MusicCommandHandler {
     return base + n;
   }
 
+  /** Remaining queue slots for a user (Infinity = unlimited) */
+  private slotsLeft(ctx: CommandContext): number {
+    const max = ctx.bot.currentConfig.maxQueuePerUser ?? 0;
+    if (!max || (ctx.bot.currentConfig.djGroupIds?.length && ctx.bot.isDj(ctx.clid))) return Infinity;
+    const mine = ctx.bot.queue.getUpcoming(1000).filter((t) => t.requestedBy === ctx.nickname).length;
+    return Math.max(0, max - mine);
+  }
+
   private async enqueueAndReply(ctx: CommandContext, input: string, mode: EnqueueMode, provider: SearchProvider): Promise<void> {
     const { bot, reply, nickname } = ctx;
     this.ensureConnected(bot);
+    const slots = this.slotsLeft(ctx);
+    if (slots <= 0) {
+      reply(`⛔ You already have ${bot.currentConfig.maxQueuePerUser} track(s) in the queue – wait until one has played.`);
+      return;
+    }
     const resolved = await resolveInput(input, { provider, requestedBy: nickname });
+    if (resolved.items.length > slots) {
+      reply(`Only ${slots} more track(s) allowed for you – adding the first ${slots}.`);
+      resolved.items = resolved.items.slice(0, slots);
+    }
     const { started } = await enqueueItems(bot, resolved.items, mode);
     for (const it of resolved.items.slice(0, 50)) saveMusicRequest(this.prisma, bot.currentConfig.serverConfigId, it);
 
@@ -274,6 +314,10 @@ export class MusicCommandHandler {
     if (!pick) { ctx.reply(`Pick a number between 1 and ${pending.results.length}.`); return; }
     this.pendingSearch.delete(key);
     this.ensureConnected(ctx.bot);
+    if (this.slotsLeft(ctx) <= 0) {
+      ctx.reply(`⛔ You already have ${ctx.bot.currentConfig.maxQueuePerUser} track(s) in the queue.`);
+      return;
+    }
     const item = trackToQueueItem(pick, ctx.nickname);
     const { started } = await enqueueItems(ctx.bot, [item], mode);
     saveMusicRequest(this.prisma, ctx.bot.currentConfig.serverConfigId, item);
@@ -421,7 +465,13 @@ export class MusicCommandHandler {
       reply(`Usage: [b]!remove <1-${bot.queue.upcomingCount}>[/b] (number from !queue)`);
       return;
     }
-    const removed = bot.queue.removeAt(this.upcomingIndex(bot, n));
+    const idx = this.upcomingIndex(bot, n);
+    const target = bot.queue.getAll()[idx];
+    if (bot.currentConfig.djOnly && !bot.isDj(ctx.clid) && target?.requestedBy !== ctx.nickname) {
+      reply('You can only remove your own tracks.');
+      return;
+    }
+    const removed = bot.queue.removeAt(idx);
     reply(removed ? `✖ Removed: ${this.label(removed)}` : 'Not found.');
   }
 
@@ -522,6 +572,133 @@ export class MusicCommandHandler {
     reply('👋 On my way.');
   }
 
+  // ─── Community / DJ features ───────────────────────────────
+
+  private cmdVoteSkip(ctx: CommandContext): void {
+    const { bot, clid, reply, botId } = ctx;
+    const np = bot.nowPlaying;
+    if (!np) { reply('Nothing is playing.'); return; }
+    // DJs and the requester skip immediately
+    if ((bot.currentConfig.djGroupIds?.length && bot.isDj(clid)) || np.requestedBy === ctx.nickname) {
+      bot.skip();
+      reply('⏭ Skipped.');
+      return;
+    }
+    const key = np.uid || np.id;
+    let v = this.votes.get(botId);
+    if (!v || v.uid !== key) { v = { uid: key, voters: new Set() }; this.votes.set(botId, v); }
+    v.voters.add(clid);
+    const listeners = bot.channelListeners.map((l) => l.clid);
+    // Only count votes of people who are still in the channel
+    const valid = [...v.voters].filter((id) => listeners.includes(id)).length;
+    const pct = bot.currentConfig.voteSkipPercent ?? 50;
+    const needed = Math.max(1, Math.ceil((listeners.length || 1) * pct / 100));
+    if (valid >= needed) {
+      this.votes.delete(botId);
+      bot.skip();
+      bot.sendChannelMessage(`⏭ Vote passed (${valid}/${needed}) – skipped [b]${this.label(np)}[/b].`);
+    } else {
+      bot.sendChannelMessage(`🗳 ${ctx.nickname} wants to skip – ${valid}/${needed} votes. Type [b]${bot.currentConfig.commandPrefix || '!'}voteskip[/b] to agree.`);
+    }
+  }
+
+  /** Save the current track into a playlist (default "Favoriten"). Remote tracks are stored as streamed songs. */
+  private async cmdSave(ctx: CommandContext): Promise<void> {
+    const { bot, reply } = ctx;
+    const np = bot.nowPlaying;
+    if (!np) { reply('Nothing is playing.'); return; }
+    if (np.source === 'radio') { reply('Radio streams cannot be saved.'); return; }
+    const serverConfigId = bot.currentConfig.serverConfigId;
+    const name = (ctx.args || 'Favoriten').slice(0, 60);
+
+    let song: any = np.source === 'local' && /^\d+$/.test(np.id)
+      ? await this.prisma.song.findUnique({ where: { id: parseInt(np.id) } })
+      : null;
+    if (!song && np.sourceUrl) {
+      song = await this.prisma.song.findFirst({ where: { serverConfigId, sourceUrl: np.sourceUrl } });
+    }
+    if (!song) {
+      song = await this.prisma.song.create({
+        data: {
+          title: np.title.slice(0, 300),
+          artist: np.artist ?? null,
+          duration: np.duration ?? null,
+          filePath: '', // streamed on demand
+          source: np.source,
+          sourceUrl: np.sourceUrl ?? np.streamUrl ?? null,
+          thumbnail: np.thumbnail ?? null,
+          serverConfigId,
+        } as any,
+      });
+    }
+    let pl: any = await this.prisma.playlist.findFirst({ where: { name } });
+    if (!pl) pl = await this.prisma.playlist.create({ data: { name, musicBotId: ctx.botId } });
+    const exists = await this.prisma.playlistSong.findFirst({ where: { playlistId: pl.id, songId: song.id } });
+    if (exists) { reply(`Already in [b]${name}[/b].`); return; }
+    const count = await this.prisma.playlistSong.count({ where: { playlistId: pl.id } });
+    await this.prisma.playlistSong.create({ data: { playlistId: pl.id, songId: song.id, position: count } });
+    reply(`❤ Saved [b]${this.label(np)}[/b] to [b]${name}[/b] (${count + 1} tracks) – play it with ${bot.currentConfig.commandPrefix || '!'}playlist ${name}`);
+  }
+
+  private async cmdTop(ctx: CommandContext): Promise<void> {
+    const { bot, reply } = ctx;
+    const serverConfigId = bot.currentConfig.serverConfigId;
+    if (ctx.args.toLowerCase().startsWith('user')) {
+      const rows: any[] = await (this.prisma as any).musicRequest.groupBy({
+        by: ['requestedBy'],
+        where: { serverConfigId, requestedBy: { not: null } },
+        _sum: { playCount: true },
+        orderBy: { _sum: { playCount: 'desc' } },
+        take: 10,
+      });
+      if (!rows.length) { reply('No requests yet.'); return; }
+      reply('🏆 Top requesters:\n' + rows.map((r, i) => `${i + 1}. ${r.requestedBy} – ${r._sum.playCount} requests`).join('\n'));
+      return;
+    }
+    const rows: any[] = await (this.prisma as any).musicRequest.findMany({
+      where: { serverConfigId },
+      orderBy: [{ playCount: 'desc' }, { requestedAt: 'desc' }],
+      take: 10,
+    });
+    if (!rows.length) { reply('No requests yet.'); return; }
+    reply('🔥 Most requested:\n' + rows.map((r, i) => `${i + 1}. ${r.artist ? `${r.artist} – ` : ''}${r.title} (${r.playCount}×)`).join('\n'));
+  }
+
+  private async cmdEq(ctx: CommandContext): Promise<void> {
+    const { bot, reply } = ctx;
+    const list = Object.entries(EQ_PRESETS).map(([k, v]) => `${k} (${v.label})`).join(' · ');
+    const preset = ctx.args.toLowerCase().trim();
+    if (!preset) { reply(`🎚 EQ: [b]${bot.eqPreset}[/b]\nPresets: ${list}`); return; }
+    if (!EQ_PRESETS[preset]) { reply(`Unknown preset. Available: ${list}`); return; }
+    bot.setEq(preset);
+    await this.prisma.musicBot.update({ where: { id: ctx.botId }, data: { eqPreset: preset } as any }).catch(() => { });
+    reply(`🎚 EQ set to [b]${EQ_PRESETS[preset].label}[/b].`);
+  }
+
+  private cmdSleep(ctx: CommandContext): void {
+    const { bot, reply } = ctx;
+    const a = ctx.args.toLowerCase().trim();
+    if (!a) {
+      const left = bot.sleepUntil ? Math.ceil((bot.sleepUntil - Date.now()) / 60000) : 0;
+      reply(left > 0 ? `💤 Music stops in ${left} min.` : 'No sleep timer. Usage: [b]!sleep 30[/b] (minutes) or [b]!sleep off[/b]');
+      return;
+    }
+    if (a === 'off' || a === '0') { bot.setSleepTimer(0); reply('Sleep timer cancelled.'); return; }
+    // "1:30" = 1 h 30 min (parseTimestamp reads it as 1*60+30), otherwise plain minutes
+    const minutes = a.includes(':') ? (parseTimestamp(a) ?? 0) : parseInt(a);
+    if (!minutes || minutes < 1) { reply('Usage: [b]!sleep 30[/b] (minutes)'); return; }
+    bot.setSleepTimer(minutes);
+    reply(`💤 Music stops in ${minutes} min.`);
+  }
+
+  private cmdDj(ctx: CommandContext): void {
+    const { bot, clid, reply } = ctx;
+    const cfg = bot.currentConfig;
+    const groups = cfg.djGroupIds ?? [];
+    if (!groups.length) { reply('No DJ groups configured – everyone can control the bot.'); return; }
+    reply(`${bot.isDj(clid) ? '✅ You are a DJ.' : '❌ You are not a DJ.'} DJ groups: ${groups.join(', ')}${cfg.djOnly ? ' · DJ-only mode is on' : ''}`);
+  }
+
   // ─── Video streaming ───────────────────────────────────────
 
   private async cmdStream(ctx: CommandContext): Promise<void> {
@@ -566,6 +743,7 @@ export class MusicCommandHandler {
       `${p}shuffle · ${p}loop [off|track|queue] · ${p}autoplay [on|off]`,
       `${p}vol [0-100|+10|-10] · ${p}seek 1:30 · ${p}ff 30 · ${p}rw 10`,
       `${p}radio [id|name] · ${p}playlist [id|name] · ${p}history · ${p}join`,
+      `${p}voteskip · ${p}save [playlist] · ${p}top [users] · ${p}eq [preset] · ${p}sleep <min|off> · ${p}dj`,
       `${p}stream <url> · ${p}stopstream · ${p}viewers`,
     ].join('\n'));
   }

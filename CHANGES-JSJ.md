@@ -28,3 +28,34 @@ Neue Felder (MusicBot-Einstellungen, Song.thumbnail, MusicRequest.artist/source/
 
 ## Update
 Wie bisher: `docker compose build && docker compose up -d` (Backend + Frontend neu bauen).
+
+---
+
+# Update 2 – Server-Templates & DJ-Funktionen
+
+## Server-Templates (neue Seite „Server Templates“)
+- **5 fertige Komplett-Layouts**: Gaming Community, Music & DJ Label, Clan/eSport, Streamer Community, Freundeskreis.
+  Jedes enthält Channelbaum mit Spacern, Unterchannels, Max-Clients, Opus-Music-Channels, moderierte Channels
+  (Talk Power), Join-Power-geschützte Team-Bereiche, AFK-Channel, Servergruppen mit Rechte-Presets und Icons.
+- **Rechte-Presets** für Gruppen: Admin, Moderator, Support, VIP, Member, DJ, Streamer, Bot.
+- **14 eigene Pixel-Icons** (Krone, Schild, Stern, Note, Roboter, Kopfhörer, Gamepad, AFK, Schloss …) –
+  werden automatisch per TS-Dateitransfer hochgeladen und an Gruppen/Channels gesetzt.
+- **Vorschau** (Trockenlauf): zeigt vorher, was angelegt/geändert würde.
+- Optional: alle alten Channels löschen, fremde Gruppen löschen, Servername/Willkommensnachricht setzen,
+  **Admin-Token** für die oberste Gruppe erzeugen.
+- Mehrfach anwendbar: vorhandene Gruppen/Channels mit gleichem Namen werden aktualisiert statt doppelt angelegt.
+- **Aktuellen Server als Template speichern** (Backup!), Templates als JSON herunterladen, bearbeiten, importieren.
+- **Icons für bestehende Gruppen**: Icon (optional eigene Farbe oder eigenes PNG) auf jede Server-/Channelgruppe
+  oder als Server-Icon setzen.
+- Hinweis: Für Icons muss der Dateitransfer-Port des TS-Servers (Standard 30033/TCP) vom Panel aus erreichbar sein.
+
+## Musikbot
+- **DJ-Gruppen + DJ-Modus**: Steuerbefehle (skip, vol, stop, seek, clear …) nur für bestimmte Servergruppen.
+- **!voteskip** – Mehrheit (einstellbar, Standard 50 % der Zuhörer) überspringt; Anfragender/DJ sofort.
+- **Queue-Limit pro User** (DJs ausgenommen).
+- **Equalizer**: Flat, Bass, Bass Boost, Techno/Schranz, Vocal, Treble, Night, Loud – im Player oder `!eq techno`.
+- **Sleep-Timer**: im Player oder `!sleep 30`.
+- **!save [Playlist]** speichert den laufenden Track (auch YouTube/SoundCloud, ohne Download) in „Favoriten“.
+- **!top** / **!top users** – meistgewünschte Tracks / aktivste Wünscher.
+- **Weiterspielen nach Neustart**: Queue + Position werden gespeichert und nach Panel-/Bot-Neustart fortgesetzt.
+- `!remove` im DJ-Modus nur für eigene Tracks, `!dj` zeigt, ob man DJ ist.

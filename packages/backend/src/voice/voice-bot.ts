@@ -94,6 +94,26 @@ export interface VoiceBotConfig {
   commandPrefix?: string;
   /** Provider for "!play <text>" searches */
   defaultSearch?: SearchProvider;
+  /** Server group ids that count as DJ (empty = everybody) */
+  djGroupIds?: number[];
+  /** Control commands (skip, volume, stop…) only for DJs */
+  djOnly?: boolean;
+  /** Max. queued tracks per user (0 = unlimited, DJs exempt) */
+  maxQueuePerUser?: number;
+  /** % of listeners needed for !voteskip */
+  voteSkipPercent?: number;
+  /** EQ preset key */
+  eqPreset?: string;
+  /** Restore queue after a restart */
+  resumeQueue?: boolean;
+}
+
+export interface QueueSnapshot {
+  items: QueueItem[];
+  index: number;
+  position: number;
+  playing: boolean;
+  savedAt: number;
 }
 
 export interface HistoryEntry {
@@ -112,6 +132,8 @@ interface ChannelClient {
   cid: number;
   nickname: string;
   type: number; // 0 = human, 1 = query
+  groups: number[];
+  uid?: string;
 }
 
 interface PlaybackSession {
@@ -359,6 +381,91 @@ export class VoiceBot extends EventEmitter {
     return this.clients.get(clid)?.cid ?? 0;
   }
 
+  getClientGroups(clid: number): number[] {
+    return this.clients.get(clid)?.groups ?? [];
+  }
+
+  /** True if the client is in one of the configured DJ groups (or no DJ groups are configured). */
+  isDj(clid: number): boolean {
+    const dj = this.config.djGroupIds ?? [];
+    if (dj.length === 0) return true;
+    return this.getClientGroups(clid).some((g) => dj.includes(g));
+  }
+
+  // ─── EQ / sleep timer ───────────────────────────────────────
+
+  get eqPreset(): string {
+    return this.config.eqPreset || 'flat';
+  }
+
+  /** Change EQ – the running track restarts at the current position with the new filter. */
+  setEq(preset: string): void {
+    this.config.eqPreset = preset;
+    if (this._status === 'playing' && this._nowPlaying) {
+      if (this._isStreaming) {
+        const item = this._nowPlaying;
+        const token = this.playToken;
+        this.clearTimer();
+        this.startSession(item, 0, token, 0).catch((err) => { if (token === this.playToken) this.finishTrack(item, err); });
+      } else {
+        this.seek(this.position);
+      }
+    }
+  }
+
+  private sleepTimer: ReturnType<typeof setTimeout> | null = null;
+  private _sleepUntil = 0;
+
+  get sleepUntil(): number {
+    return this._sleepUntil;
+  }
+
+  /** Stop playback after `minutes` (0 = cancel). */
+  setSleepTimer(minutes: number): void {
+    if (this.sleepTimer) clearTimeout(this.sleepTimer);
+    this.sleepTimer = null;
+    this._sleepUntil = 0;
+    if (!minutes || minutes <= 0) return;
+    const ms = Math.min(minutes, 24 * 60) * 60_000;
+    this._sleepUntil = Date.now() + ms;
+    this.sleepTimer = setTimeout(() => {
+      this.sleepTimer = null;
+      this._sleepUntil = 0;
+      if (this.config.announce) {
+        try { this.sendChannelMessage('\uD83D\uDCA4 Sleep timer – good night!'); } catch { }
+      }
+      this.stopAudio();
+    }, ms);
+  }
+
+  // ─── Queue snapshot (resume after restart) ──────────────────
+
+  snapshot(): QueueSnapshot {
+    return {
+      items: this.queue.getAll().map(({ resolved: _r, ...rest }) => rest as QueueItem),
+      index: this.queue.index,
+      position: this._isStreaming ? 0 : this.position,
+      playing: this._status === 'playing' || this._status === 'paused',
+      savedAt: Date.now(),
+    };
+  }
+
+  /** Restore a snapshot. Starts playback at the saved position if it was playing. */
+  async restore(snap: QueueSnapshot): Promise<boolean> {
+    if (!snap?.items?.length) return false;
+    this.queue.clear();
+    this.queue.addMany(snap.items);
+    if (!snap.playing || snap.index < 0) return true;
+    const item = this.queue.playAt(Math.min(snap.index, this.queue.length - 1));
+    if (!item) return true;
+    try {
+      await this.play(item, item.source === 'radio' ? 0 : Math.max(0, snap.position - 2));
+    } catch (err: any) {
+      console.warn(`[VoiceBot ${this.config.id}] Could not resume "${item.title}": ${err.message}`);
+    }
+    return true;
+  }
+
   updateConfig(partial: Partial<VoiceBotConfig>): void {
     Object.assign(this.config, partial);
     if (partial.nickname) this._originalNickname = partial.nickname;
@@ -401,6 +508,8 @@ export class VoiceBot extends EventEmitter {
             cid: parseInt(e.ctid) || 0,
             nickname: e.client_nickname || `#${clid}`,
             type: parseInt(e.client_type || '0') || 0,
+            groups: String(e.client_servergroups || '').split(',').map((x) => parseInt(x)).filter((x) => !isNaN(x)),
+            uid: e.client_unique_identifier,
           });
           changed = true;
         }
@@ -412,7 +521,7 @@ export class VoiceBot extends EventEmitter {
           const c = this.clients.get(clid);
           const ctid = parseInt(e.ctid) || 0;
           if (c) c.cid = ctid || c.cid;
-          else this.clients.set(clid, { cid: ctid, nickname: `#${clid}`, type: clid === this.client.getClientId() ? 1 : 0 });
+          else this.clients.set(clid, { cid: ctid, nickname: `#${clid}`, type: clid === this.client.getClientId() ? 1 : 0, groups: [] });
           changed = true;
         }
         break;
@@ -425,6 +534,21 @@ export class VoiceBot extends EventEmitter {
         for (const e of entries) {
           const c = this.clients.get(parseInt(e.clid));
           if (c && e.client_nickname) c.nickname = e.client_nickname;
+          if (c && e.client_servergroups) c.groups = String(e.client_servergroups).split(',').map((x) => parseInt(x)).filter((x) => !isNaN(x));
+        }
+        break;
+      case 'notifyservergroupclientadded':
+        for (const e of entries) {
+          const c = this.clients.get(parseInt(e.clid));
+          const sgid = parseInt(e.sgid);
+          if (c && !isNaN(sgid) && !c.groups.includes(sgid)) c.groups.push(sgid);
+        }
+        break;
+      case 'notifyservergroupclientdeleted':
+        for (const e of entries) {
+          const c = this.clients.get(parseInt(e.clid));
+          const sgid = parseInt(e.sgid);
+          if (c) c.groups = c.groups.filter((g) => g !== sgid);
         }
         break;
     }
@@ -706,6 +830,7 @@ export class VoiceBot extends EventEmitter {
       stream = this.pipeline.openYtDlpPcmStream(item.sourceUrl!, {
         seek: startAt,
         normalize: this.config.normalize !== false,
+        eq: this.config.eqPreset,
         ytdlpArgs: getCookieArgs(),
       });
     } else {
@@ -716,6 +841,7 @@ export class VoiceBot extends EventEmitter {
         headers: src.headers,
         isLive: src.isLive,
         normalize: this.config.normalize !== false,
+        eq: this.config.eqPreset,
       });
     }
     if (token !== this.playToken) { stream.kill(); return; }
