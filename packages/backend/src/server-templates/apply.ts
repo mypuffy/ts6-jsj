@@ -7,6 +7,7 @@ import type {
 } from './types.js';
 
 type Row = Record<string, any>;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const arr = (r: any): Row[] => (Array.isArray(r) ? r : r ? [r] : []);
 const num = (v: any) => parseInt(String(v ?? '0'), 10) || 0;
 
@@ -33,16 +34,44 @@ export class TemplateApplier {
 
   private get dry() { return !!this.opts.dryRun; }
 
+  private lastCall = 0;
+
+  /**
+   * Throttled + retried WebQuery call. Applying a template sends hundreds of commands;
+   * without a pause the TS flood protection drops the connection ("socket hang up").
+   */
   private async call(cmd: string, params: Record<string, any>): Promise<any> {
-    return this.client.executePost(this.sid, cmd, params);
+    const MIN_GAP_MS = 140; // ≈ 7 commands/s – below the default query flood limit
+    for (let attempt = 0; ; attempt++) {
+      const wait = this.lastCall + MIN_GAP_MS - Date.now();
+      if (wait > 0) await sleep(wait);
+      this.lastCall = Date.now();
+      try {
+        // Reads via GET (like the rest of the panel), writes via POST
+        return /(list|info)$/.test(cmd)
+          ? await this.client.execute(this.sid, cmd, params)
+          : await this.client.executePost(this.sid, cmd, params);
+      } catch (err: any) {
+        const msg = String(err?.message ?? '');
+        const network = err?.code === -1 || /socket hang up|ECONNRESET|ECONNREFUSED|EPIPE|timeout|Connection failed/i.test(msg);
+        const flood = err?.code === 524 || /flood/i.test(msg);
+        if ((network || flood) && attempt < 5) {
+          const backoff = flood ? 4000 : 1000 * 2 ** attempt;
+          if (attempt === 0) this.log('warn', `Server is throttling (${msg || 'connection reset'}) – slowing down and retrying…`);
+          await sleep(backoff);
+          continue;
+        }
+        throw err;
+      }
+    }
   }
 
   async apply(tpl: ServerTemplate): Promise<ApplyResult> {
     this.log('info', `${this.dry ? 'Preview of' : 'Applying'} template "${tpl.name}"`);
     try {
-      const info = arr(await this.client.execute(this.sid, 'serverinfo'))[0] ?? {};
-      const groups = arr(await this.client.execute(this.sid, 'servergrouplist'));
-      const cgroups = arr(await this.client.execute(this.sid, 'channelgrouplist'));
+      const info = arr(await this.call('serverinfo', {}))[0] ?? {};
+      const groups = arr(await this.call('servergrouplist', {}));
+      const cgroups = arr(await this.call('channelgrouplist', {}));
 
       if (this.opts.icons !== false) await this.prepareIcons(tpl);
 
@@ -83,7 +112,10 @@ export class TemplateApplier {
         }
         this.iconIds.set(ref, icon.id);
       } catch (err: any) {
-        this.log('warn', `Icon "${key}" could not be uploaded (${err.message}). Is the file-transfer port (30033/TCP) reachable from the panel? Continuing without icons.`);
+        const scope = /scope/i.test(String(err.message));
+        this.log('warn', scope
+          ? `Icons skipped: the WebQuery API key is not allowed to upload files ("${err.message}"). Create an API key with scope "manage" (see help) and update it under Settings → Connections.`
+          : `Icon "${key}" could not be uploaded (${err.message}). Is the file-transfer port (30033/TCP) reachable from the panel? Continuing without icons.`);
         this.iconIds.clear();
         return;
       }
@@ -198,7 +230,7 @@ export class TemplateApplier {
   // ─── Channels ────────────────────────────────────────────────
 
   private async applyChannels(tree: TemplateChannel[]) {
-    let existing = arr(await this.client.execute(this.sid, 'channellist', { '-flags': '' }));
+    let existing = arr(await this.call('channellist', { '-flags': '' }));
     let oldDefault: Row | undefined;
 
     if (this.opts.wipeChannels) {
@@ -219,7 +251,7 @@ export class TemplateApplier {
           try { await this.call('channeledit', { cid: num(oldDefault.cid), channel_name: `__old_default_${Date.now()}` }); } catch { /* ignore */ }
         }
         this.log('ok', `Removed ${toDelete.length + (oldDefault ? 1 : 0)} old channel(s)`);
-        existing = arr(await this.client.execute(this.sid, 'channellist', { '-flags': '' }));
+        existing = arr(await this.call('channellist', { '-flags': '' }));
       }
     }
 
